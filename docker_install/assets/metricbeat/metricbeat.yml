@@ -1,0 +1,83 @@
+output.elasticsearch:
+  hosts: ["http://els:9200"]
+
+setup.kibana:
+  hosts: ["http://kib:5601"]
+
+# metricbeat.max_start_delay: 10s
+
+# metricbeat.config.modules:
+#   path: ${path.config}/modules.d/*.yml
+#   reload.enabled: true
+#   reload.period: 10s
+
+metricbeat.modules:
+  
+  #--------------------- Zookeeper Servers Module ---------------------
+  - module: prometheus
+    period: 60s
+    metricsets: ["collector"]
+    hosts: ["http://zookeeper:1234"]
+    metrics_path: /metrics
+    fields_under_root: true
+    fields:
+      env: "dev"
+      job_name: "zookeeper"
+
+  #----------------------- Kafka Servers Module -----------------------
+  - module: prometheus
+    period: 60s
+    metricsets: ["collector"]
+    hosts: ["http://kafka:1234"]
+    metrics_path: /metrics
+    fields_under_root: true
+    fields:
+      env: "dev"
+      job_name: "kafka"
+
+  #----------------------- Kafka Connect Module -----------------------
+  - module: prometheus
+    period: 60s
+    metricsets: ["collector"]
+    hosts: ["http://connect:1234"]
+    metrics_path: /metrics
+    fields_under_root: true
+    fields:
+      env: "dev"
+      job_name: "connect"
+      cluster: "cluster1"
+
+  #----------------- Confluent Schema Registry Module -----------------
+  - module: prometheus
+    period: 60s
+    metricsets: ["collector"]
+    hosts: ["http://schemaregistry:1234"]
+    metrics_path: /metrics
+    fields_under_root: true
+    fields:
+      env: "dev"
+      job_name: "schemaregistry"
+
+  # #--------------------- Confluent KSQLDB Module ----------------------
+  - module: prometheus
+    period: 60s
+    metricsets: ["collector"]
+    hosts: ["http://ksqldb-server:1234"]
+    metrics_path: /metrics
+    fields_under_root: true
+    fields:
+      env: "dev"
+      job_name: "ksqldb"
+      cluster: "ksqldb-cluster-1"
+
+#----------------------------- Dashboards -----------------------------
+# Control loading the sample dashboards to the Kibana index or not.
+setup.dashboards:
+  enabled: false
+
+logging.level: info
+logging.to_files: false
+logging.to_syslog: true
+logging.files:
+  keepfiles: 3
+  permissions: 0644

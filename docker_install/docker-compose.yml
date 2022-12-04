@@ -1,0 +1,252 @@
+version: "2.3"
+services:
+  ### ===================
+  ### ZOOKEEPER SERVICE
+  ### ===================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    hostname: zookeeper
+    container_name: zookeeper
+    restart: always
+    environment:
+      - ZOOKEEPER_SERVER_ID=1
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIMES=2000
+      - ZOOKEEPER_SYNC_LIMIT=2
+      - KAFKA_OPTS=-javaagent:/usr/share/jmx-exporter/jmx_prometheus_javaagent-0.16.1.jar=1234:/usr/share/jmx-exporter/zookeeper.yml
+    ports:
+      - 3999:1234
+    volumes:
+      - ./exporters/jmx-exporter/:/usr/share/jmx-exporter
+      - zk-data:/var/lib/zookeper/data
+    networks:
+      - kafka_network
+  
+  ### ====================
+  ### KAFKA SERVICE
+  ### ====================
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    restart: always
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=LISTENER_DOCKER_INTERNAL://kafka:19092,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=LISTENER_DOCKER_INTERNAL
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_OPTS=-javaagent:/usr/share/jmx-exporter/jmx_prometheus_javaagent-0.16.1.jar=1234:/usr/share/jmx-exporter/kafka_broker.yml
+    ports:
+      - 4999:1234
+      - 9092:9092
+    volumes:
+      - kf-data:/var/lib/kafka/data
+      - ./exporters/jmx-exporter/:/usr/share/jmx-exporter
+    networks:
+      - kafka_network
+    depends_on:
+      - zookeeper
+
+  ### ====================
+  ### SCHEMA REGISTRY SERVICE
+  ### ====================  
+  schemaregistry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: schemaregistry
+    restart: always
+    depends_on:
+      - kafka
+    volumes:
+      - ./exporters/jmx-exporter/:/usr/share/jmx-exporter
+    ports:
+      - 8085:8085
+      - 5999:1234
+    environment:
+      CUB_CLASSPATH: '/usr/share/java/confluent-security/schema-registry/*:/usr/share/java/schema-registry/*:/usr/share/java/schema-registry-plugins/*:/usr/share/java/cp-base-new/*'
+      SCHEMA_REGISTRY_HOST_NAME: schemaregistry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:19092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8085
+      EXTRA_ARGS: -javaagent:/usr/share/jmx-exporter/jmx_prometheus_javaagent-0.16.1.jar=1234:/usr/share/jmx-exporter/confluent_schemaregistry.yml
+    networks:
+      - kafka_network
+  
+  ### ====================
+  ### KAFKA CONNECT SERVICE
+  ### ====================
+  connect:
+    image: confluentinc/cp-kafka-connect:latest
+    container_name: connect
+    restart: always
+    depends_on:
+      - schemaregistry
+    volumes:
+      - ./exporters/jmx-exporter/:/usr/share/jmx-exporter
+    ports:
+      - 8083:8083
+      - 6999:1234
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:19092"
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schemaregistry:8085'
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schemaregistry:8085'
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "INFO"
+      CONNECT_LOG4J_LOGGERS: "org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/etc/kafka-connect/jars,/usr/share/confluent-hub-components'
+      EXTRA_ARGS: -javaagent:/usr/share/jmx-exporter/jmx_prometheus_javaagent-0.16.1.jar=1234:/usr/share/jmx-exporter/kafka_connect.yml
+    networks:
+      - kafka_network
+
+  ### ====================
+  ### KSQLDB SERVER SERVICE
+  ### ====================
+  ksqldb-server:
+    image: confluentinc/cp-ksqldb-server:latest
+    hostname: ksqldb-server
+    container_name: ksqldb-server
+    restart: always
+    depends_on:
+      - schemaregistry
+    volumes:
+      - ./scripts/helper:/tmp/helper
+      - ./exporters/jmx-exporter/:/usr/share/jmx-exporter
+    ports:
+      - 8088:8088
+      - 7999:1234
+    environment:
+      KSQL_KSQL_SERVICE_ID: "ksql-cluster"
+      KSQL_KSQL_STREAMS_REPLICATION_FACTOR: 2
+      KSQL_KSQL_INTERNAL_TOPIC_REPLICAS: 2
+      KSQL_PRODUCER_ENABLE_IDEMPOTENCE: 'true'
+      KSQL_BOOTSTRAP_SERVERS: kafka:19092
+      KSQL_HOST_NAME: ksqldb-server
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_CACHE_MAX_BYTES_BUFFERING: 0
+      KSQL_OPTS: -javaagent:/usr/share/jmx-exporter/jmx_prometheus_javaagent-0.16.1.jar=1234:/usr/share/jmx-exporter/confluent_ksql.yml
+    networks:
+      - kafka_network
+
+  ### ====================
+  ### PROMETHEUS SERVICE
+  ### ====================
+  prometheus:
+    image: prom/prometheus:v2.29.2
+    container_name: prometheus
+    ports:
+      - 9090:9090
+    volumes:
+      - ./assets/prometheus/prometheus-config/:/etc/prometheus
+    networks:
+      - kafka_network
+
+  ### ====================
+  ### GRAFANA SERVICE
+  ### ====================
+  grafana:
+    image: grafana/grafana:8.1.3
+    container_name: grafana
+    environment:
+      - "GF_SECURITY_ADMIN_USER=admin"
+      - "GF_SECURITY_ADMIN_PASSWORD=password"
+      - "GF_USERS_ALLOW_SIGN_UP=false"
+    ports:
+      - 3000:3000
+    volumes:
+      - ./assets/grafana/provisioning/:/etc/grafana/provisioning
+    networks:
+      - kafka_network
+  
+  ### ====================
+  ### ELASTICSEARCH SERVICE
+  ### ====================
+  els:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.7
+    restart: always
+    ports:
+      - 9200:9200
+      - 9300:9300
+    environment:
+      - discovery.type=single-node
+    volumes:
+      - els-data:/usr/share/elasticsearch/data
+    networks:
+      - kafka_network
+  
+  ### ====================
+  ### KIBANA SERVICE
+  ### ====================
+  kib:
+    image: docker.elastic.co/kibana/kibana:7.17.7
+    restart: always
+    container_name: kib
+    environment:
+      - ELASTICSEARCH_HOSTS=http://els:9200
+    ports:
+      - 5601:5601
+    volumes:
+      - ./assets/kibana/:/config/
+    networks:
+      - kafka_network
+    depends_on:
+      - els
+  
+  ### ====================
+  ### FILEBEAT SERVICE
+  ### ====================
+  filebeat:
+    container_name: filebeat
+    hostname: filebeat
+    image: docker.elastic.co/beats/filebeat:7.17.7
+    user: root
+    volumes:
+      - ./assets/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: filebeat -e
+    depends_on:
+      - els
+      - kib
+    restart: on-failure
+    networks:
+      - kafka_network
+
+  ### ====================
+  ### METRICBEAT SERVICE
+  ### ====================
+  metricbeat:
+    container_name: metricbeat
+    hostname: metricbeat
+    image: docker.elastic.co/beats/metricbeat:7.17.7
+    volumes:
+      - ./assets/metricbeat/metricbeat.yml:/usr/share/metricbeat/metricbeat.yml:ro
+    command: metricbeat -e
+    depends_on:
+      - els
+      - kib
+    restart: on-failure
+    networks:
+      - kafka_network
+### ========================
+### VOLUMES PERSISTENT DATA
+### ========================
+volumes:
+  zk-data:
+  kf-data:
+  els-data:
+### ===================================
+### NETWORKS GROUP FOR ONE SAME SERVICE
+### ===================================
+networks:
+  kafka_network:
+  node_network:
